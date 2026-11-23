@@ -1,0 +1,678 @@
+---
+title: "Births Data Ireland"
+author: "Donal"
+date: "2025-02-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(plyr)
+library(dplyr)
+
+library(tidyverse)
+library(lubridate)
+library(csodata)
+library(stats)
+library(forecast)
+
+```
+# Ireland Birth Rates 1980 to 2018
+
+## Set the import website and read in the Ireland dataset and tidy the dataset
+
+```{r get_Ireland_Data}
+raw_births <- cso_get_data("DHA10")
+
+nm = c("North Tipperary", "South Tipperary")
+
+where_births <- raw_births[(raw_births$Statistic %in% "Births") & 
+                             (raw_births$Martial.Status.of.Mother%in% "All marital status") &
+                             (raw_births$Sex.of.Infant%in% "Both sexes"), ] 
+
+where_births$Area.of.Residence.of.Mother <- as.character(where_births$Area.of.Residence.of.Mother)
+where_births$Area.of.Residence.of.Mother <- ifelse(where_births$Area.of.Residence.of.Mother %in% c("North Tipperary", "South Tipperary"), "Tipperary", ifelse(where_births$Area.of.Residence.of.Mother %in% "Dublin City and County", "Dublin", ifelse(where_births$Area.of.Residence.of.Mother %in% "All counties and regions", "All", where_births$Area.of.Residence.of.Mother)) )
+
+where_births$county <- where_births$Area.of.Residence.of.Mother
+
+Births_long<- where_births %>%
+  pivot_longer(cols = '1980':'2018',
+               names_to = "Year",
+               values_to = "Births") %>%
+  select(c(county, Age.Group.of.Mother, Births, Year))
+
+Tot_Births <- Births_long[(Births_long$Age.Group.of.Mother %in% "All ages") , ]
+
+Not_Tot_Births <- Births_long[!(Births_long$Age.Group.of.Mother %in% "All ages") , ]
+
+Group_births <- Not_Tot_Births %>%
+  group_by(county, Year) %>%
+  summarise(Births = sum(Births, na.rm=T))
+  
+County_wide <- Group_births %>%
+  pivot_wider(names_from = county,
+              values_from = Births)
+
+County_wide$Not_Kerry <- County_wide$All - County_wide$Kerry
+County_wide$Not_Offaly <- County_wide$All - County_wide$Offaly
+County_wide$Not_Dublin <- County_wide$All - County_wide$Dublin
+County_wide$Not_Meath <- County_wide$All - County_wide$Meath
+County_wide$Not_Cork <- County_wide$All - County_wide$Cork
+County_wide$Not_Donegal <- County_wide$All - County_wide$Donegal
+County_wide$Not_Galway <- County_wide$All - County_wide$Galway
+County_wide$Not_Tipperary <- County_wide$All - County_wide$Tipperary
+County_wide$Not_Kilkenny <- County_wide$All - County_wide$Kilkenny
+County_wide$Not_Wexford <- County_wide$All - County_wide$Wexford
+County_wide$Not_Clare <- County_wide$All - County_wide$Clare
+
+
+```
+
+## Create the dataframe with the winners
+
+```{r create_winners}
+winnersf <- data.frame(
+  year = 1979:2017,
+  Winner_football = c("Kerry", "Kerry", "Kerry", "Offaly", "Dublin", "Kerry", "Kerry", "Kerry", "Meath", "Meath", "Cork", "Cork", "Down", "Donegal", "Derry", "Down", "Dublin", "Meath", "Kerry", "Galway","Meath", "Kerry", "Galway","Armagh","Tyrone","Kerry", "Tyrone","Kerry", "Kerry", "Tyrone","Kerry", "Cork", "Dublin", "Donegal", "Dublin", "Kerry", "Dublin", "Dublin", "Dublin"),
+  F_Time_since_last_win = c(1978, 1979, 1980, 1972, 1977, 1981, 1984, 1985, 1967, 1987, 1973, 1989, 1968, 1884, 1884, 1991, 1983, 1988, 1986, 1966, 1988, 1997, 1998, 1884, 1884, 2000, 2003, 2004, 2006, 2005, 2007, 1990, 1995, 1992, 2011, 2009, 2013, 2015, 2016 ))
+
+winnersh <- data.frame(
+  year = 2017:1979,
+  Winner_hurling = c("Galway", "Tipperary", "Kilkenny", "Kilkenny", "Clare", "Kilkenny", "Kilkenny", "Tipperary", "Kilkenny", "Kilkenny", "Kilkenny", "Kilkenny", "Cork", "Cork", "Kilkenny", "Kilkenny", "Tipperary", "Kilkenny", "Cork", "Offaly", "Clare", "Wexford", "Clare", "Offaly", "Kilkenny", "Kilkenny", "Tipperary", "Cork", "Tipperary", "Galway", "Galway", "Cork", "Offaly", "Cork", "Kilkenny", "Kilkenny", "Offaly", "Galway", "Kilkenny"),
+ H_Time_since_last_win = c(1988, 2010, 2014, 2012, 1997, 2011, 2009, 2001, 2008, 2007, 2006, 2003, 2004, 1999, 2002, 2000, 1991, 1993, 1990, 1994, 1995, 1968, 1914, 1985, 1992, 1983, 1989, 1986, 1971, 1987, 1980, 1984, 1981, 1978, 1982, 1979, 1884, 1923, 1975)
+)
+
+winners <- merge(x=winnersf,  y =winnersh, by = "year", all= TRUE)
+
+winners$rel_year <- winners$year +1 
+
+```
+
+## Import the CSV for the Northern Ireland Births
+
+```{r Import_NI}
+NI_births <- read.csv("NI_Data_Upload.csv")
+
+NI_births$Not_Derry <- NI_births$All.Live.Births - NI_births$Derry
+NI_births$Not_Tyrone <- NI_births$All.Live.Births - NI_births$Tyrone
+NI_births$Not_Armagh <- NI_births$All.Live.Births - NI_births$Armagh
+NI_births$Not_Down <- NI_births$All.Live.Births - NI_births$Down
+
+```
+
+```{r subdivide_county_wide}
+Kerry_years <- winners[(winners$Winner_football %in% "Kerry" | winners$Winner_hurling %in% "Kerry"),] %>%
+  select(c("rel_year"))
+Offaly_years <- winners[(winners$Winner_football %in% "Offaly" | winners$Winner_hurling %in% "Offaly"),] %>%
+  select(c("rel_year"))
+Dublin_years <- winners[(winners$Winner_football %in% "Dublin" | winners$Winner_hurling %in% "Dublin"),] %>%
+  select(c("rel_year"))
+Meath_years <- winners[(winners$Winner_football %in% "Meath" | winners$Winner_hurling %in% "Meath"),] %>%
+  select(c("rel_year"))
+Cork_years <- winners[(winners$Winner_football %in% "Cork" | winners$Winner_hurling %in% "Cork"),] %>%
+  select(c("rel_year"))
+Donegal_years <- winners[(winners$Winner_football %in% "Donegal" | winners$Winner_hurling %in% "Donegal"),] %>%
+  select(c("rel_year"))
+Galway_years <- winners[(winners$Winner_football %in% "Galway" | winners$Winner_hurling %in% "Galway"),] %>%
+  select(c("rel_year"))
+Tipperary_years <- winners[(winners$Winner_football %in% "Tipperary" | winners$Winner_hurling %in% "Tipperary"),] %>%
+  select(c("rel_year"))
+Kilkenny_years <- winners[(winners$Winner_football %in% "Kilkenny" | winners$Winner_hurling %in% "Kilkenny"),] %>%
+  select(c("rel_year"))
+Wexford_years <- winners[(winners$Winner_football %in% "Wexford" | winners$Winner_hurling %in% "Wexford"),] %>%
+  select(c("rel_year"))
+Clare_years <- winners[(winners$Winner_football %in% "Clare" | winners$Winner_hurling %in% "Clare"),] %>%
+  select(c("rel_year"))
+Tyrone_years <- winners[(winners$Winner_football %in% "Tyrone" | winners$Winner_hurling %in% "Tyrone"),] %>%
+  select(c("rel_year"))
+Derry_years <- winners[(winners$Winner_football %in% "Derry" | winners$Winner_hurling %in% "Derry"),] %>%
+  select(c("rel_year"))
+Armagh_years <- winners[(winners$Winner_football %in% "Armagh" | winners$Winner_hurling %in% "Armagh"),] %>%
+  select(c("rel_year"))
+Down_years <- winners[(winners$Winner_football %in% "Down" | winners$Winner_hurling %in% "Down"),] %>%
+  select(c("rel_year"))
+
+
+County_wide_Kerry <- County_wide[!(County_wide$Year %in% Kerry_years$rel_year), ] %>%
+  select(c("Year", "Kerry", "Not_Kerry", "Cork", "Limerick"))
+County_wide_Offaly <- County_wide[!(County_wide$Year %in% Offaly_years$rel_year), ] %>%
+  select(c("Year", "Offaly", "Not_Offaly", "Laois", "Westmeath"))
+County_wide_Dublin <- County_wide[!(County_wide$Year %in% Dublin_years$rel_year), ] %>%
+  select(c("Year", "Dublin", "Not_Dublin", "Meath", "Kildare"))
+County_wide_Meath <- County_wide[!(County_wide$Year %in% Meath_years$rel_year), ] %>%
+  select(c("Year", "Meath", "Not_Meath", "Dublin", "Kildare"))
+County_wide_Cork <- County_wide[!(County_wide$Year %in% Cork_years$rel_year), ] %>%
+   select(c("Year", "Kerry", "Not_Cork", "Cork", "Limerick"))
+County_wide_Donegal <- County_wide[!(County_wide$Year %in% Donegal_years$rel_year), ] %>%
+  select(c("Year", "Donegal", "Not_Donegal", "Sligo", "Leitrim"))
+County_wide_Galway <- County_wide[!(County_wide$Year %in% Galway_years$rel_year), ] %>%
+  select(c("Year", "Galway", "Not_Galway", "Mayo", "Clare"))
+County_wide_Tipperary <- County_wide[!(County_wide$Year %in% Tipperary_years$rel_year), ] %>%
+  select(c("Year", "Tipperary", "Not_Tipperary", "Kilkenny", "Limerick"))
+County_wide_Kilkenny <- County_wide[!(County_wide$Year %in% Kilkenny_years$rel_year), ] %>%
+  select(c("Year", "Kilkenny", "Not_Kilkenny", "Tipperary", "Waterford"))
+County_wide_Wexford <- County_wide[!(County_wide$Year %in% Wexford_years$rel_year), ] %>%
+  select(c("Year", "Wexford", "Not_Wexford", "Kilkenny", "Waterford"))
+County_wide_Clare <- County_wide[!(County_wide$Year %in% Clare_years$rel_year), ] %>%
+  select(c("Year", "Clare", "Not_Clare", "Galway", "Limerick"))
+
+County_wide_Tyrone <- NI_births[!(NI_births$Registration.Year %in% Tyrone_years$rel_year), ] %>%
+  select(c("Registration.Year", "Tyrone", "Belfast", "South.Eastern"))
+County_wide_Derry <- NI_births[!(NI_births$Registration.Year %in% Derry_years$rel_year), ] %>%
+  select(c("Registration.Year", "Derry", "Belfast", "South.Eastern", "Southern"))
+County_wide_Armagh <- NI_births[!(NI_births$Registration.Year %in% Armagh_years$rel_year), ] %>%
+  select(c("Registration.Year", "Armagh", "South.Eastern", "Northern", "Western"))
+County_wide_Down <- NI_births[!(NI_births$Registration.Year %in% Down_years$rel_year), ] %>%
+  select(c("Registration.Year", "Down", "Northern", "Western", "Belfast"))
+
+WCounty_wide_Tyrone <- NI_births[(NI_births$Registration.Year %in% Tyrone_years$rel_year), ] %>%
+  select(c("Registration.Year", "Tyrone", "Belfast", "South.Eastern"))
+WCounty_wide_Derry <- NI_births[(NI_births$Registration.Year %in% Derry_years$rel_year), ] %>%
+  select(c("Registration.Year", "Derry", "Belfast", "South.Eastern", "Southern"))
+WCounty_wide_Armagh <- NI_births[(NI_births$Registration.Year %in% Armagh_years$rel_year), ] %>%
+  select(c("Registration.Year", "Armagh", "South.Eastern", "Northern", "Western"))
+WCounty_wide_Down <- NI_births[(NI_births$Registration.Year %in% Down_years$rel_year), ] %>%
+  select(c("Registration.Year", "Down", "Northern", "Western", "Belfast"))
+
+
+WCounty_wide_Kerry <- County_wide[(County_wide$Year %in% Kerry_years$rel_year), ] %>%
+  select(c("Year", "Kerry", "Not_Kerry", "Cork", "Limerick"))
+WCounty_wide_Offaly <- County_wide[(County_wide$Year %in% Offaly_years$rel_year), ] %>%
+  select(c("Year", "Offaly", "Not_Offaly", "Laois", "Westmeath"))
+WCounty_wide_Dublin <- County_wide[(County_wide$Year %in% Dublin_years$rel_year), ] %>%
+  select(c("Year", "Dublin", "Not_Dublin", "Meath", "Kildare"))
+WCounty_wide_Meath <- County_wide[(County_wide$Year %in% Meath_years$rel_year), ] %>%
+  select(c("Year", "Meath", "Not_Meath", "Dublin", "Kildare"))
+WCounty_wide_Cork <- County_wide[(County_wide$Year %in% Cork_years$rel_year), ] %>%
+   select(c("Year", "Kerry", "Not_Cork", "Cork", "Limerick"))
+WCounty_wide_Donegal <- County_wide[(County_wide$Year %in% Donegal_years$rel_year), ] %>%
+  select(c("Year", "Donegal", "Not_Donegal", "Sligo", "Leitrim"))
+WCounty_wide_Galway <- County_wide[(County_wide$Year %in% Galway_years$rel_year), ] %>%
+  select(c("Year", "Galway", "Not_Galway", "Mayo", "Clare"))
+WCounty_wide_Tipperary <- County_wide[(County_wide$Year %in% Tipperary_years$rel_year), ] %>%
+  select(c("Year", "Tipperary", "Not_Tipperary", "Kilkenny", "Limerick"))
+WCounty_wide_Kilkenny <- County_wide[(County_wide$Year %in% Kilkenny_years$rel_year), ] %>%
+  select(c("Year", "Kilkenny", "Not_Kilkenny", "Tipperary", "Waterford"))
+WCounty_wide_Wexford <- County_wide[(County_wide$Year %in% Wexford_years$rel_year), ] %>%
+  select(c("Year", "Wexford", "Not_Wexford", "Kilkenny", "Waterford"))
+WCounty_wide_Clare <- County_wide[(County_wide$Year %in% Clare_years$rel_year), ] %>%
+  select(c("Year", "Clare", "Not_Clare", "Galway", "Limerick"))
+
+```
+## Modelling time Ireland Set
+
+```{r Modelling_Ireland}
+Kerry_mod <- lm(Kerry ~ Not_Kerry + Cork + Limerick, data= County_wide_Kerry)
+Offaly_mod <- lm(Offaly ~ Not_Offaly + Laois + Westmeath, data= County_wide_Offaly)
+Dublin_mod <- lm(Dublin ~ Not_Dublin + Meath + Kildare, data= County_wide_Dublin)
+Meath_mod <- lm(Meath ~ Not_Meath + Dublin + Kildare, data= County_wide_Meath)
+Cork_mod <- lm(Cork ~ Not_Cork + Kerry + Limerick, data= County_wide_Cork)
+Donegal_mod <- lm(Donegal ~ Not_Donegal + Sligo + Leitrim, data= County_wide_Donegal)
+Galway_mod <- lm(Galway ~ Not_Galway + Mayo + Clare, data= County_wide_Galway)
+Tipperary_mod <- lm(Tipperary ~ Not_Tipperary + Kilkenny + Limerick, data= County_wide_Tipperary)
+Kilkenny_mod <- lm(Kilkenny ~ Not_Kilkenny + Tipperary + Waterford, data= County_wide_Kilkenny)
+Wexford_mod <- lm(Wexford ~ Not_Wexford + Kilkenny + Waterford, data= County_wide_Wexford)
+Clare_mod <- lm(Clare ~ Not_Clare + Galway + Limerick, data= County_wide_Clare)
+
+Tyrone_mod <- lm(Tyrone ~ Belfast + South.Eastern, data= County_wide_Tyrone)
+Derry_mod <- lm(Derry ~ Belfast + South.Eastern + Southern , data= County_wide_Derry)
+Armagh_mod <- lm(Armagh ~ Northern + South.Eastern + Western, data= County_wide_Armagh)
+Down_mod <- lm(Down ~ Northern + Belfast + Western , data= County_wide_Down)
+
+Kerry_stats <- summary(Kerry_mod)
+Offaly_stats <- summary(Offaly_mod)
+Dublin_stats <- summary(Dublin_mod)
+Meath_stats <- summary(Meath_mod)
+Cork_stats <- summary(Cork_mod)
+Donegal_stats <- summary(Donegal_mod)
+Galway_stats <- summary(Galway_mod)
+Tipperary_stats <- summary(Tipperary_mod)
+Kilkenny_stats <- summary(Kilkenny_mod)
+Wexford_stats <- summary(Wexford_mod)
+Clare_stats <- summary(Clare_mod)
+
+Tyrone_stats <- summary(Tyrone_mod)
+Derry_stats <- summary(Derry_mod)
+Armagh_stats <- summary(Armagh_mod)
+Down_stats <- summary(Down_mod)
+
+WCounty_wide_Kerry$pred <- predict(Kerry_mod, WCounty_wide_Kerry)
+WCounty_wide_Offaly$pred <- predict(Offaly_mod, WCounty_wide_Offaly)
+WCounty_wide_Dublin$pred <- predict(Dublin_mod, WCounty_wide_Dublin)
+WCounty_wide_Meath$pred <- predict(Meath_mod, WCounty_wide_Meath)
+WCounty_wide_Cork$pred <- predict(Cork_mod, WCounty_wide_Cork)
+WCounty_wide_Donegal$pred <- predict(Donegal_mod, WCounty_wide_Donegal)
+WCounty_wide_Galway$pred <- predict(Galway_mod, WCounty_wide_Galway)
+WCounty_wide_Tipperary$pred <- predict(Tipperary_mod, WCounty_wide_Tipperary)
+WCounty_wide_Kilkenny$pred <- predict(Kilkenny_mod, WCounty_wide_Kilkenny)
+WCounty_wide_Wexford$pred <- predict(Wexford_mod, WCounty_wide_Wexford)
+WCounty_wide_Clare$pred <- predict(Clare_mod, WCounty_wide_Clare)
+
+WCounty_wide_Tyrone$pred <- predict(Tyrone_mod, WCounty_wide_Tyrone)
+WCounty_wide_Derry$pred <- predict(Derry_mod, WCounty_wide_Derry)
+WCounty_wide_Armagh$pred <- predict(Armagh_mod, WCounty_wide_Armagh)
+WCounty_wide_Down$pred <- predict(Down_mod, WCounty_wide_Down)
+
+WCounty_wide_Kerry$standif <- (WCounty_wide_Kerry$Kerry - WCounty_wide_Kerry$pred)/Kerry_stats$sigma
+WCounty_wide_Offaly$standif <- (WCounty_wide_Offaly$Offaly - WCounty_wide_Offaly$pred)/Offaly_stats$sigma
+WCounty_wide_Dublin$standif <- (WCounty_wide_Dublin$Dublin - WCounty_wide_Dublin$pred)/Dublin_stats$sigma
+WCounty_wide_Meath$standif <- (WCounty_wide_Meath$Meath - WCounty_wide_Meath$pred)/Meath_stats$sigma
+WCounty_wide_Cork$standif <- (WCounty_wide_Cork$Cork - WCounty_wide_Cork$pred)/Cork_stats$sigma
+WCounty_wide_Donegal$standif <- (WCounty_wide_Donegal$Donegal - WCounty_wide_Donegal$pred)/Donegal_stats$sigma
+WCounty_wide_Galway$standif <- (WCounty_wide_Galway$Galway - WCounty_wide_Galway$pred)/Galway_stats$sigma
+WCounty_wide_Tipperary$standif <- (WCounty_wide_Tipperary$Tipperary - WCounty_wide_Tipperary$pred)/ Tipperary_stats$sigma
+WCounty_wide_Kilkenny$standif <- (WCounty_wide_Kilkenny$Kilkenny - WCounty_wide_Kilkenny$pred)/Kilkenny_stats$sigma
+WCounty_wide_Wexford$standif <- (WCounty_wide_Wexford$Wexford - WCounty_wide_Wexford$pred)/Wexford_stats$sigma
+WCounty_wide_Clare$standif <- (WCounty_wide_Clare$Clare - WCounty_wide_Clare$pred)/Clare_stats$sigma
+
+WCounty_wide_Tyrone$standif <- (WCounty_wide_Tyrone$Tyrone - WCounty_wide_Tyrone$pred)/Tyrone_stats$sigma
+WCounty_wide_Derry$standif <- (WCounty_wide_Derry$Derry - WCounty_wide_Derry$pred)/Derry_stats$sigma
+WCounty_wide_Armagh$standif <- (WCounty_wide_Armagh$Armagh - WCounty_wide_Armagh$pred)/Armagh_stats$sigma
+WCounty_wide_Down$standif <- (WCounty_wide_Down$Down - WCounty_wide_Down$pred)/Down_stats$sigma
+
+WCounty_wide_Tyrone$Year <- WCounty_wide_Tyrone$Registration.Year 
+WCounty_wide_Derry$Year <- WCounty_wide_Derry$Registration.Year 
+WCounty_wide_Armagh$Year <- WCounty_wide_Armagh$Registration.Year  
+WCounty_wide_Down$Year <- WCounty_wide_Down$Registration.Year 
+
+WCounty_wide_Kerry$FH <- "F"
+WCounty_wide_Offaly$FH <-  ifelse(WCounty_wide_Offaly$Year == 1983 , "F", "H")
+WCounty_wide_Dublin$FH <- "F"
+WCounty_wide_Meath$FH <- "F"
+WCounty_wide_Cork$FH <- ifelse(WCounty_wide_Cork$Year == 1990 | WCounty_wide_Cork$Year == 1991| WCounty_wide_Cork$Year == 2011, "F", "H")
+WCounty_wide_Donegal$FH <- "F"
+WCounty_wide_Galway$FH <- ifelse(WCounty_wide_Galway$Year == 1999|WCounty_wide_Galway$Year == 2002, "F", "H")
+WCounty_wide_Tipperary$FH <- "H"
+WCounty_wide_Kilkenny$FH <- "H"
+WCounty_wide_Wexford$FH <- "H"
+WCounty_wide_Clare$FH <- "H"
+WCounty_wide_Tyrone$FH <- "F"
+WCounty_wide_Derry$FH <- "F"
+WCounty_wide_Armagh$FH <- "F"
+WCounty_wide_Down$FH <- "F"
+
+
+
+All_results <- rbind.fill(WCounty_wide_Clare, WCounty_wide_Wexford, WCounty_wide_Kilkenny, WCounty_wide_Tipperary, WCounty_wide_Galway, WCounty_wide_Donegal, WCounty_wide_Cork, WCounty_wide_Meath, WCounty_wide_Dublin, WCounty_wide_Offaly, WCounty_wide_Kerry, WCounty_wide_Tyrone, WCounty_wide_Derry, WCounty_wide_Armagh, WCounty_wide_Down)
+
+All_mean <- mean(All_results$standif)
+All_sd <- sd(All_results$standif)
+All_len <- length(All_results$standif)
+
+All_test <- All_mean/(All_sd/ sqrt(All_len))
+
+NKK <- All_results[!(All_results$Year %in% Kerry_years$rel_year | All_results$Year %in% Kilkenny_years$rel_year), ] %>%
+  select("standif")
+
+NKK_mean <- mean(NKK$standif)
+NKK_sd <- sd(NKK$standif)
+NKK_len <- length(NKK$standif)
+
+NKK_test <- NKK_mean/(NKK_sd/ sqrt(NKK_len))
+
+NotNI <- All_results[(is.na(All_results$Registration.Year)), ] %>%
+  select("standif")
+
+NotNI_mean <- mean(NotNI$standif)
+NotNI_sd <- sd(NotNI$standif)
+NotNI_len <- length(NotNI$standif)
+
+NotNI_test <- NotNI_mean/(NotNI_sd/ sqrt(NotNI_len))
+
+OnlyFoot <- All_results[(All_results$FH == "F"), ]
+
+OnlyFoot$Year[order(OnlyFoot$Year, decreasing = TRUE)]
+
+OnlyFoot_mean <- mean(OnlyFoot$standif)
+OnlyFoot_sd <- sd(OnlyFoot$standif)
+OnlyFoot_len <- length(OnlyFoot$standif)
+
+OnlyFoot_test <- OnlyFoot_mean/(OnlyFoot_sd/ sqrt(OnlyFoot_len))
+
+OnlyHurl <- rbind.fill(All_results[(All_results$FH == "H"), ], All_results[(All_results$Year == 1991), ])
+
+OnlyHurl_mean <- mean(OnlyHurl$standif)
+OnlyHurl_sd <- sd(OnlyHurl$standif)
+OnlyHurl_len <- length(OnlyHurl$standif)
+
+OnlyHurl_test <- OnlyHurl_mean/(OnlyHurl_sd/ sqrt(OnlyHurl_len))
+
+famine_f <- winnersf[(winnersf$year - winnersf$F_Time_since_last_win >= 10), ]
+famine_f <- famine_f[!(famine_f$Winner_football == "Tyrone" |famine_f$Winner_football == "Down"| famine_f$Winner_football == "Armagh"| famine_f$Winner_football == "Derry"), ]
+famine_f$FH = "F"
+famine_h <- winnersh[(winnersh$year - winnersh$H_Time_since_last_win >= 10), ]
+famine_h$FH = "H"
+
+amine_relief = rbind.fill(famine_h, famine_f)
+amine_relief$fam <- paste(amine_relief$year, amine_relief$FH )
+
+All_results$fam <- paste(All_results$Year, All_results$FH )
+
+famine_relief  <- All_results[(All_results$fam %in% amine_relief$fam ), ]
+
+famine_relief_mean <- mean(famine_relief$standif)
+famine_relief_sd <- sd(famine_relief$standif)
+famine_relief_len <- length(famine_relief$standif)
+
+famine_relief_test <- famine_relief_mean/(famine_relief_sd/ sqrt(famine_relief_len))
+
+```
+
+
+
+
+
+## Transform the Ireland results
+
+```{r Lets_try_arimax}
+
+
+Cork2010 <- County_wide[(County_wide$Year <= 2010), ] %>% 
+select(c("Year", "Cork", "Not_Cork"))
+Dublin2011 <- County_wide[(County_wide$Year <= 2011), ] %>% 
+select(c("Year", "Dublin", "Not_Dublin"))
+Donegal2012 <- County_wide[(County_wide$Year <= 2012), ] %>% 
+select(c("Year", "Donegal", "Not_Donegal"))
+Dublin2013 <- County_wide[(County_wide$Year <= 2013), ] %>% 
+select(c("Year", "Dublin", "Not_Dublin"))
+Kerry2014 <- County_wide[(County_wide$Year <= 2014), ] %>% 
+select(c("Year", "Kerry", "Not_Kerry"))
+Dublin2015 <- County_wide[(County_wide$Year <= 2015), ] %>% 
+select(c("Year", "Dublin", "Not_Dublin"))
+Dublin2016 <- County_wide[(County_wide$Year <= 2016), ] %>% 
+select(c("Year", "Dublin", "Not_Dublin"))
+Dublin2017 <- County_wide[(County_wide$Year <= 2017), ] %>% 
+select(c("Year", "Dublin", "Not_Dublin"))
+
+Galway2017 <- County_wide[(County_wide$Year <= 2017), ] %>% 
+select(c("Year", "Galway", "Not_Galway"))
+Tipperary2016 <- County_wide[(County_wide$Year <= 2016), ] %>% 
+select(c("Year", "Tipperary", "Not_Tipperary"))
+Kilkenny2015 <- County_wide[(County_wide$Year <= 2015), ] %>% 
+select(c("Year", "Kilkenny", "Not_Kilkenny"))
+Kilkenny2014 <- County_wide[(County_wide$Year <= 2014), ] %>% 
+select(c("Year", "Kilkenny", "Not_Kilkenny"))
+Clare2013 <- County_wide[(County_wide$Year <= 2013), ] %>% 
+select(c("Year", "Clare", "Not_Clare"))
+Kilkenny2012 <- County_wide[(County_wide$Year <= 2012), ] %>% 
+select(c("Year", "Kilkenny", "Not_Kilkenny"))
+Kilkenny2011 <- County_wide[(County_wide$Year <= 2011), ] %>% 
+select(c("Year", "Kilkenny", "Not_Kilkenny"))
+Tipperary2010 <- County_wide[(County_wide$Year <= 2010), ] %>% 
+select(c("Year", "Tipperary", "Not_Tipperary"))
+
+Galway2017_mod <- auto.arima(Galway2017$Galway, xreg = Galway2017$Not_Galway)
+Tipperary2016_mod <- auto.arima(Tipperary2016$Tipperary, xreg = Tipperary2016$Not_Tipperary)
+Kilkenny2015_mod <- auto.arima(Kilkenny2015$Kilkenny, xreg = Kilkenny2015$Not_Kilkenny)
+Kilkenny2014_mod <- auto.arima(Kilkenny2014$Kilkenny, xreg = Kilkenny2014$Not_Kilkenny)
+Clare2013_mod <- auto.arima(Clare2013$Clare, xreg = Clare2013$Not_Clare)
+Kilkenny2012_mod <- auto.arima(Kilkenny2012$Kilkenny, xreg = Kilkenny2012$Not_Kilkenny)
+Kilkenny2011_mod <- auto.arima(Kilkenny2011$Kilkenny, xreg = Kilkenny2011$Not_Kilkenny)
+Tipperary2010_mod <- auto.arima(Tipperary2010$Tipperary, xreg = Tipperary2010$Not_Tipperary)
+
+
+Cork2010_mod <- auto.arima(Cork2010$Cork, xreg = Cork2010$Not_Cork)
+Dublin2011_mod <- auto.arima(Dublin2011$Dublin, xreg = Dublin2011$Not_Dublin)
+Donegal2012_mod <- auto.arima(Donegal2012$Donegal, xreg = Donegal2012$Not_Donegal)
+Dublin2013_mod <- auto.arima(Dublin2013$Dublin, xreg = Dublin2013$Not_Dublin)
+Kerry2014_mod <- auto.arima(Kerry2014$Kerry, xreg = Kerry2014$Not_Kerry)
+Dublin2015_mod <- auto.arima(Dublin2015$Dublin, xreg = Dublin2015$Not_Dublin)
+Dublin2016_mod <- auto.arima(Dublin2016$Dublin, xreg = Dublin2016$Not_Dublin)
+Dublin2017_mod <- auto.arima(Dublin2017$Dublin, xreg = Dublin2017$Not_Dublin)
+
+Galway2017_stats <- summary(Galway2017_mod)
+Tipperary2016_stats <- summary(Tipperary2016_mod)
+Kilkenny2015_stats <- summary(Kilkenny2015_mod)
+Kilkenny2014_stats <- summary(Kilkenny2014_mod)
+Clare2013_stats <- summary(Clare2013_mod)
+Kilkenny2012_stats <- summary(Kilkenny2012_mod)
+Kilkenny2011_stats <- summary(Kilkenny2011_mod)
+Tipperary2010_stats <- summary(Tipperary2010_mod)
+
+
+Cork2010_stats <- summary(Cork2010_mod)
+Dublin2011_stats <- summary(Dublin2011_mod)
+Donegal2012_stats <- summary(Donegal2012_mod)
+Dublin2013_stats <- summary(Dublin2013_mod)
+Kerry2014_stats <- summary(Kerry2014_mod)
+Dublin2015_stats <- summary(Dublin2015_mod)
+Dublin2016_stats <- summary(Dublin2016_mod)
+Dublin2017_stats <- summary(Dublin2017_mod)
+
+FCork2010 <- County_wide[(County_wide$Year == 2011), ] %>% 
+  select(c("Year", "Cork", "Not_Cork"))
+FDublin2011 <- County_wide[(County_wide$Year == 2012), ] %>% 
+  select(c("Year", "Dublin", "Not_Dublin"))
+FDonegal2012 <- County_wide[(County_wide$Year == 2013), ] %>% 
+  select(c("Year", "Donegal", "Not_Donegal"))
+FDublin2013 <- County_wide[(County_wide$Year == 2014), ] %>% 
+  select(c("Year", "Dublin", "Not_Dublin"))
+FKerry2014 <- County_wide[(County_wide$Year == 2015), ] %>% 
+  select(c("Year", "Kerry", "Not_Kerry"))
+FDublin2015 <- County_wide[(County_wide$Year == 2016), ] %>% 
+  select(c("Year", "Dublin", "Not_Dublin"))
+FDublin2016 <- County_wide[(County_wide$Year == 2017), ] %>% 
+  select(c("Year", "Dublin", "Not_Dublin"))
+FDublin2017 <- County_wide[(County_wide$Year == 2018), ] %>% 
+  select(c("Year", "Dublin", "Not_Dublin"))
+
+FGalway2017 <- County_wide[(County_wide$Year == 2018), ] %>% 
+  select(c("Year", "Galway", "Not_Galway"))
+FTipperary2016 <- County_wide[(County_wide$Year == 2017), ] %>% 
+  select(c("Year", "Tipperary", "Not_Tipperary"))
+FKilkenny2015 <- County_wide[(County_wide$Year == 2016), ] %>% 
+  select(c("Year", "Kilkenny", "Not_Kilkenny"))
+FKilkenny2014 <- County_wide[(County_wide$Year == 2015), ] %>% 
+  select(c("Year", "Kilkenny", "Not_Kilkenny"))
+FClare2013 <- County_wide[(County_wide$Year == 2014), ] %>% 
+  select(c("Year", "Clare", "Not_Clare"))
+FKilkenny2012 <- County_wide[(County_wide$Year == 2013), ] %>% 
+  select(c("Year", "Kilkenny", "Not_Kilkenny"))
+FKilkenny2011 <- County_wide[(County_wide$Year == 2012), ] %>% 
+  select(c("Year", "Kilkenny", "Not_Kilkenny"))
+FTipperary2010 <- County_wide[(County_wide$Year == 2011), ] %>% 
+  select(c("Year", "Tipperary", "Not_Tipperary"))
+
+Galway2017predict <- forecast(Galway2017_mod, xreg =  FGalway2017$Not_Galway, h=1)
+Tipperary2016predict <- forecast(Tipperary2016_mod, xreg =  FTipperary2016$Not_Tipperary, h=1)
+Kilkenny2015predict <- forecast(Kilkenny2015_mod, xreg =  FKilkenny2015$Not_Kilkenny, h=1)
+Kilkenny2014predict <- forecast(Kilkenny2014_mod, xreg =  FKilkenny2014$Not_Kilkenny, h=1)
+Clare2013predict <- forecast(Clare2013_mod, xreg =  FClare2013$Not_Clare, h=1)
+Kilkenny2012predict <- forecast(Kilkenny2012_mod, xreg =  FKilkenny2012$Not_Kilkenny, h=1)
+Kilkenny2011predict <- forecast(Kilkenny2011_mod, xreg =  FKilkenny2011$Not_Kilkenny, h=1)
+Tipperary2010predict <- forecast(Tipperary2010_mod, xreg =  FTipperary2010$Not_Tipperary, h=1)
+
+Cork2010predict <- forecast(Cork2010_mod, xreg =  FCork2010$Not_Cork, h=1)
+Dublin2011predict <- forecast(Dublin2011_mod, xreg =  FDublin2011$Not_Dublin, h=1)
+Donegal2012predict <- forecast(Donegal2012_mod, xreg =  FDonegal2012$Not_Donegal, h=1)
+Dublin2013predict <- forecast(Dublin2013_mod, xreg =  FDublin2013$Not_Dublin, h=1)
+Kerry2014predict <- forecast(Kerry2014_mod, xreg =  FKerry2014$Not_Kerry, h=1)
+Dublin2015predict <- forecast(Dublin2015_mod, xreg =  FDublin2015$Not_Dublin, h=1)
+Dublin2016predict <- forecast(Dublin2016_mod, xreg =  FDublin2016$Not_Dublin, h=1)
+Dublin2017predict <- forecast(Dublin2017_mod, xreg =  FDublin2017$Not_Dublin, h=1)
+
+T_Galway2017_stat <- (FGalway2017$Galway - Galway2017predict$mean)/Galway2017_mod$sigma
+T_Tipperary2016_stat <- (FTipperary2016$Tipperary - Tipperary2016predict$mean)/Tipperary2016_mod$sigma
+T_Kilkenny2015_stat <- (FKilkenny2015$Kilkenny - Kilkenny2015predict$mean)/Kilkenny2015_mod$sigma
+T_Kilkenny2014_stat <- (FKilkenny2014$Kilkenny - Kilkenny2014predict$mean)/Kilkenny2014_mod$sigma
+T_Clare2013_stat <- (FClare2013$Clare - Clare2013predict$mean)/Clare2013_mod$sigma
+T_Kilkenny2012_stat <- (FKilkenny2012$Kilkenny - Kilkenny2012predict$mean)/Kilkenny2012_mod$sigma
+T_Kilkenny2011_stat <- (FKilkenny2011$Kilkenny - Kilkenny2011predict$mean)/Kilkenny2011_mod$sigma
+T_Tipperary2010_stat <- (FTipperary2010$Tipperary - Tipperary2010predict$mean)/Tipperary2010_mod$sigma
+
+
+T_Cork2010_stat <- (FCork2010$Cork - Cork2010predict$mean)/Cork2010_mod$sigma
+T_Dublin2011_stat <- (FDublin2011$Dublin - Dublin2011predict$mean)/Dublin2011_mod$sigma
+T_Donegal2012_stat <- (FDonegal2012$Donegal - Donegal2012predict$mean)/Donegal2012_mod$sigma
+T_Dublin2013_stat <- (FDublin2013$Dublin - Dublin2013predict$mean)/Dublin2013_mod$sigma
+T_Kerry2014_stat <- (FKerry2014$Kerry - Kerry2014predict$mean)/Kerry2014_mod$sigma
+T_Dublin2015_stat <- (FDublin2015$Dublin - Dublin2015predict$mean)/Dublin2015_mod$sigma
+T_Dublin2016_stat <- (FDublin2016$Dublin - Dublin2016predict$mean)/Dublin2016_mod$sigma
+T_Dublin2017_stat <- (FDublin2017$Dublin - Dublin2017predict$mean)/Dublin2017_mod$sigma
+
+
+T_All_results <- data.frame( results=c( T_Galway2017_stat, T_Tipperary2016_stat, T_Kilkenny2015_stat, T_Kilkenny2014_stat, T_Clare2013_stat, T_Kilkenny2012_stat, T_Kilkenny2011_stat, T_Tipperary2010_stat, T_Cork2010_stat, T_Dublin2011_stat, T_Donegal2012_stat, T_Dublin2013_stat, T_Kerry2014_stat, T_Dublin2015_stat, T_Dublin2016_stat, T_Dublin2017_stat), Year = c(2018, 2017, 2016, 2015, 2014, 2013, 2012, 2011,  2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018), Code=c("Hurling", "Hurling", "Hurling", "Hurling", "Hurling", "Hurling", "Hurling", "Hurling", "Gaelic Football", "Gaelic Football", "Gaelic Football", "Gaelic Football", "Gaelic Football", "Gaelic Football", "Gaelic Football", "Gaelic Football"))
+
+
+
+T_All_mean <- mean(T_All_results$results)
+T_All_sd <- sd(T_All_results$results)
+T_All_len <- length(T_All_results$results)
+
+T_All_test <- T_All_mean/(T_All_sd/ sqrt(T_All_len))
+
+T_All_results%>% 
+  ggplot(aes(x = Year, y = results)) + 
+  geom_point(aes(y = results, color = Code, group=1))+
+  theme(legend.position = "bottom",
+         axis.text.x = element_text(angle = 90)) +
+   labs(title = "ARIMAX Standarised model errors", y = NULL)
+
+
+
+Done_plot <- data.frame(Year=1980:2012)
+
+Done_plot$fit <- Donegal2012predict$fitted
+Done_plot$actuals <- Donegal2012predict$x
+Done_plot$predict <- NULL
+Done_plot$forecasted_actual <- NULL
+
+Done_plot %>%
+  ggplot(aes(x = Year, y = births)) + 
+  geom_line(aes(y = fit, color = "fit", group=1))+
+  geom_line(aes(y = actuals, color = "actuals", group=1))+
+  geom_point(aes(x = 2013 ,y = Donegal2012predict$mean, color = "fit", group=1))+
+  geom_point(aes(x = 2013 ,y = FDonegal2012$Donegal, color = "actuals", group=1))+
+  theme(legend.position = "bottom",
+         axis.text.x = element_text(angle = 90)) +
+   labs(title = "ARIMAX County Donegal model fit and prediction error")
+
+temp <- data.frame(Year = 2013, predict = Donegal2012predict$mean, forecasted_actual = FDonegal2012$Donegal)
+
+Done_plot <- rbind.fill(Done_plot, temp)
+Done_plot[nrow(Done_plot) + 1,] = temp
+
+plot(Donegal2012predict$x)
+abline(Donegal2012predict)
+
+test <- Donegal2012predict$mean
+test
+T_Kilkenny2014_stat
+plot(Donegal2012predict,Donegal2012$Donegal)
+
+```
+
+
+```{r Hypothesis_Tests}
+
+# Foot_mean <- mean(Footy_merge$Residuals)
+# Hurl_mean <- mean(Hurling_merge$Residuals)
+# 
+# Foot_dev <- sd(Footy_merge$Residuals)
+# Hurl_dev <- sd(Hurling_merge$Residuals)
+# 
+# 
+# Foot_stat <- Foot_mean/Foot_dev *sqrt(38)
+# Hurl_stat <- Hurl_mean/Hurl_dev *sqrt(38)
+# 
+# plot(Footy_merge$Residuals)
+# 
+# fitted(Kerry_mod)
+# 
+# County_wide$preds <- fitted(Cork_mod)
+# 
+Kerry_test <- lm(Kerry ~ Not_Kerry, data= County_wide)
+
+
+County_wide %>% 
+   ggplot(aes(x = Year, y = births)) +
+   geom_path(aes(y = Kerry, color = "Actuals", group=1)) +
+   geom_point(aes(y = Kerry, color = "Actuals")) +
+   geom_path(aes(y = Kerry_test$fitted.values, color = "Predictions", group=1)) +
+   theme(legend.position = "bottom",
+         axis.text.x = element_text(angle = 90)) +
+   labs(title = "Kerry Actuals vs predictions - single variable linear regression", y = NULL)
+
+
+expy <- County_wide %>%
+  select("Year")
+ 
+expy$Kerry <- County_wide$Kerry/max(County_wide$Kerry)
+expy$Offaly <- County_wide$Offaly/max(County_wide$Offaly)
+expy$Dublin <- County_wide$Dublin/max(County_wide$Dublin)
+expy$Meath <- County_wide$Meath/max(County_wide$Meath)
+expy$Cork <- County_wide$Cork/max(County_wide$Cork)
+expy$Donegal <- County_wide$Donegal/max(County_wide$Donegal)
+expy$Galway <- County_wide$Galway/max(County_wide$Galway)
+expy$Tipperary <- County_wide$Tipperary/max(County_wide$Tipperary)
+expy$Kilkenny <- County_wide$Kilkenny/max(County_wide$Kilkenny)
+expy$Wexford <- County_wide$Wexford/max(County_wide$Wexford)
+expy$Clare <- County_wide$Clare/max(County_wide$Clare)
+expy$Kildare <- County_wide$Kildare/max(County_wide$Kildare)
+expy$All <- County_wide$All/max(County_wide$All)
+
+expy %>% 
+  ggplot(aes(x = Year, y = births)) +
+  geom_path(aes(y = Kerry, color = "Kerry", group=1)) +
+  geom_path(aes(y = Offaly, color = "Offaly", group=1)) +
+  geom_path(aes(y = Dublin, color = "Dublin", group=1)) +
+  geom_path(aes(y = Meath, color = "Meath", group=1)) +
+  geom_path(aes(y = Cork, color = "Cork", group=1)) +
+  geom_path(aes(y = Donegal, color = "Donegal", group=1)) +
+  geom_path(aes(y = Galway, color = "Galway", group=1)) +
+  geom_path(aes(y = Tipperary, color = "Tipperary", group=1)) +
+  geom_path(aes(y = Kilkenny, color = "Kilkenny", group=1)) +
+  geom_path(aes(y = Wexford, color = "Wexford", group=1)) +
+  geom_path(aes(y = Clare, color = "Clare", group=1)) +
+  geom_path(aes(y = Kildare, color = "Kildare", group=1)) +
+  geom_point(aes(y = All, color = "All", group=1)) +
+  theme(legend.position = "bottom",
+         axis.text.x = element_text(angle = 90)) +
+   labs(title = "Shape of births curves", y = NULL)
+ 
+
+where_birthrate <- raw_births[!(raw_births$Statistic %in% "Births") & 
+                             (raw_births$Martial.Status.of.Mother%in% "All marital status")    &(raw_births$Sex.of.Infant%in% "Both sexes") 
+                             &(raw_births$Age.Group.of.Mother%in% "All ages"), ]
+
+All_results$Football_or_Hurling <- ifelse(All_results$FH == "F", "Football", "Hurling")
+
+All_results %>% 
+  ggplot(aes(x = Football_or_Hurling, y = standif, fill=Football_or_Hurling)) +
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=2, notch=FALSE)+
+   labs(title = "Normalised prediction error spreads for Gaelic Football and Hurling", y = NULL)
+
+famine_relief %>%
+  ggplot(aes(y = standif)) +
+  geom_boxplot(outlier.colour="green", outlier.shape=16,
+             outlier.size=2, notch=FALSE, fill="blue")+
+   labs(title = "Normalised prediction error spreads for First victory in > 10 years", y = NULL, fill=NULL)+
+    scale_fill_brewer(palette="Dark2")
+
+All_results$Big_winner <- ifelse(All_results$Year %in% Kerry_years$rel_year | All_results$Year %in% Kilkenny_years$rel_year, TRUE,FALSE)
+
+All_results %>% 
+  ggplot(aes(x = Big_winner, y = standif, fill=Big_winner)) +
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=2, notch=FALSE)+
+   labs(title = "Normalised prediction error spreads for frequent winners vs not", y = NULL)
+
+All_test
+famine_relief_test
+NKK_test
+NotNI_test
+OnlyFoot_test
+OnlyHurl_test
+T_All_test
+
+All_len
+famine_relief_len
+NKK_len
+NotNI_len
+OnlyFoot_len
+OnlyHurl_len
+T_All_len
+
+ 
+```
